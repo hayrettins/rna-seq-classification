@@ -75,18 +75,39 @@ process classification {
         path classification_script
 
     output:
-        path 'reports/*'
-        path 'plots/*'
-
+        //path 'reports/*'
+        //path 'plots/*'
+        path '*'  
+        path 'models_dir', emit: models_dir
     script:
     """
+    mkdir models_dir
     python3 ${classification_script} \
         --processed_data ${processed_data_csv} \
         --metadata ${metadata_output_txt} \
         --models ${recommended_models_txt} \
         --hyperparameters ${best_hyperparameters_json} \
-        --output_dir . \
+        --output_dir models_dir \
         --num_features ${params.num_features}
+    """
+}
+
+process model_evaluation {
+    publishDir 'results', mode: 'copy'
+
+    input:
+        path models_dir
+        path model_evaluation_script
+
+    output:
+        path 'reports/*'
+        path 'plots/*'
+
+    script:
+    """
+    python3 ${model_evaluation_script} \
+        --models_dir ${models_dir} \
+        --output_dir .
     """
 }
 
@@ -101,7 +122,7 @@ workflow {
     Channel.fromPath(params.model_selection_script).set { model_selection_script }
     Channel.fromPath(params.hyperparameter_optimization_script).set { hyperparameter_optimization_script }
     Channel.fromPath(params.classification_script).set { classification_script }
-
+    Channel.fromPath(params.model_evaluation_script).set { model_evaluation_script }
   
     preprocess_data(
         rnaseq_file,
@@ -140,5 +161,12 @@ workflow {
         recommended_models_txt,
         best_hyperparameters_json,
         classification_script
+    )
+
+    def models_dir = classification.out[0]
+
+    model_evaluation(
+    models_dir,
+    model_evaluation_script
     )
 }
