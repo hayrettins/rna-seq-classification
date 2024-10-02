@@ -18,6 +18,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Classification script for RNA-seq data.")
     parser.add_argument('--processed_data', type=str, required=True, help="Path to the processed data CSV file.")
     parser.add_argument('--metadata', type=str, required=True, help="Path to the metadata output file from preprocessing.")
+    parser.add_argument('--models', type=str, required=True, help="Path to the recommended models file.")
+    parser.add_argument('--hyperparameters', type=str, required=True, help="Path to the best hyperparameters JSON file.")
     parser.add_argument('--output_dir', type=str, required=True, help="Directory to save the output files.")
     parser.add_argument('--num_features', type=int, default=5, help="Number of top features to select.")
     return parser.parse_args()
@@ -75,24 +77,35 @@ def split_data(X, y):
     logging.info("Splitting data into train and test sets")
     return train_test_split(X, y, test_size=0.25, random_state=42)
 
-def train_models(X_train, y_train):
+def load_recommended_models(models_file):
+    with open(models_file, 'r') as f:
+        models = [line.strip() for line in f.readlines()]
+    return models
+
+def load_best_hyperparameters(hyperparameters_file):
+    with open(hyperparameters_file, 'r') as f:
+        best_params = json.load(f)
+    return best_params
+
+def train_models(X_train, y_train, models_to_train, best_params):
     logging.info("Training models")
     models = {}
 
-    # Logistic Regression
-    lr_model = LogisticRegression(max_iter=1000, random_state=42)
-    lr_model.fit(X_train, y_train)
-    models['LogisticRegression'] = lr_model
+    for model_name in models_to_train:
+        logging.info(f"Training {model_name}")
+        params = best_params.get(model_name, {})
+        if model_name == 'LogisticRegression':
+            model = LogisticRegression(max_iter=1000, **params)
+        elif model_name == 'RandomForest':
+            model = RandomForestClassifier(**params)
+        elif model_name == 'XGBoost':
+            model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', **params)
+        else:
+            logging.warning(f"Model {model_name} not recognized. Skipping.")
+            continue
 
-    # Random Forest
-    rf_model = RandomForestClassifier(random_state=42)
-    rf_model.fit(X_train, y_train)
-    models['RandomForest'] = rf_model
-
-    # XGBoost
-    xgb_model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
-    xgb_model.fit(X_train, y_train)
-    models['XGBoost'] = xgb_model
+        model.fit(X_train, y_train)
+        models[model_name] = model
 
     return models
 
@@ -104,18 +117,17 @@ def evaluate_models(models, X_test, y_test, label_mapping, reports_dir, plots_di
         y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
         logging.info(f"{model_name} Accuracy: {accuracy}")
+
         conf_matrix = confusion_matrix(y_test, y_pred)
         logging.info(f"{model_name} Confusion Matrix:\n{conf_matrix}")
 
-  
         class_report = classification_report(y_test, y_pred)
         logging.info(f"{model_name} Classification Report:\n{class_report}")
 
-        
         save_results(model_name, accuracy, conf_matrix, class_report, reports_dir)
 
-     
         plot_confusion_matrix(conf_matrix, labels, model_name, normalize=False, output_dir=plots_dir)
+
 
 def save_results(model_name, accuracy, conf_matrix, class_report, reports_dir):
     
@@ -164,15 +176,12 @@ def plot_confusion_matrix(cm, classes, model_name, normalize=False, output_dir='
     logging.info(f"Confusion matrix plot saved to {plot_path}")
 
 def main():
-    
     args = parse_arguments()
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
-    
     reports_dir, plots_dir = setup_output_directories(args.output_dir)
 
-    
     metadata = read_metadata(args.metadata)
     num_classes_meta = metadata.get('num_classes', None)
     if num_classes_meta is not None:
@@ -181,22 +190,24 @@ def main():
     else:
         logging.warning("Number of classes not specified in metadata.")
 
-   
     data = load_data(args.processed_data)
     X, y, label_mapping = preprocess_data(data)
 
- 
     num_classes_data = len(label_mapping)
     if num_classes_meta is not None and num_classes_meta != num_classes_data:
         logging.warning(f"Number of classes in metadata ({num_classes_meta}) does not match number of classes in data ({num_classes_data}).")
 
-
     save_label_mapping(label_mapping, reports_dir)
 
-
     X_selected, selected_features = select_features(X, y, num_features=args.num_features)
+
     X_train, X_test, y_train, y_test = split_data(X_selected, y)
-    models = train_models(X_train, y_train)
+
+    models_to_train = load_recommended_models(args.models)
+    best_params = load_best_hyperparameters(args.hyperparameters)
+
+    models = train_models(X_train, y_train, models_to_train, best_params)
+
     evaluate_models(models, X_test, y_test, label_mapping, reports_dir, plots_dir)
 
 if __name__ == "__main__":
