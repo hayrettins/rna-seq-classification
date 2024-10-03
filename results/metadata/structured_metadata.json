@@ -1,0 +1,9 @@
+{
+    "number_of_samples": 28,
+    "number_of_features": 23365,
+    "number_of_classes": 2,
+    "class_names": [
+        "DE",
+        "nonDE"
+    ]
+}

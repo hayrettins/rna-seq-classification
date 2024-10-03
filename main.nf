@@ -1,9 +1,30 @@
+process metadata_processing {
+    publishDir 'results/metadata', mode: 'copy'
+
+    input:
+        path raw_metadata_file
+        path metadata_processing_script
+        path rnaseq_file
+
+
+    output:
+        path 'structured_metadata.json'
+
+    script:
+    """
+    python3 ${metadata_processing_script} \
+        --raw_metadata ${raw_metadata_file} \
+        --rnaseq ${rnaseq_file} \
+        --output_file structured_metadata.json
+    """
+}
+
 process preprocess_data {
     publishDir 'results', mode: 'copy'
 
     input:
         path rnaseq_file
-        path metadata_file
+        path structured_metadata_json
         path main_script
         path preprocessing_script
 
@@ -15,7 +36,7 @@ process preprocess_data {
     """
     Rscript ${main_script} \
         --rnaseq ${rnaseq_file} \
-        --metadata ${metadata_file} \
+        --metadata ${structured_metadata_json} \
         --output_csv processed_data.csv \
         --output_metadata metadata_output.txt
     """
@@ -113,38 +134,41 @@ process model_evaluation {
 
 
 workflow {
-
-  
     Channel.fromPath(params.rnaseq_file).set { rnaseq_file }
-    Channel.fromPath(params.metadata_file).set { metadata_file }
+    Channel.fromPath(params.raw_metadata_file).set { raw_metadata_file }
+    Channel.fromPath(params.metadata_processing_script).set { metadata_processing_script }
     Channel.fromPath(params.main_script).set { main_script }
     Channel.fromPath(params.preprocessing_script).set { preprocessing_script }
     Channel.fromPath(params.model_selection_script).set { model_selection_script }
     Channel.fromPath(params.hyperparameter_optimization_script).set { hyperparameter_optimization_script }
     Channel.fromPath(params.classification_script).set { classification_script }
     Channel.fromPath(params.model_evaluation_script).set { model_evaluation_script }
+    
+    metadata_processing(
+        raw_metadata_file,
+        metadata_processing_script,
+        rnaseq_file
+    )
+
+    def structured_metadata_json = metadata_processing.out[0]
   
     preprocess_data(
         rnaseq_file,
-        metadata_file,
+        structured_metadata_json,
         main_script,
         preprocessing_script
     )
     def processed_data_csv = preprocess_data.out[0]
     def metadata_output_txt = preprocess_data.out[1]
 
-
-   
     model_selection(
         processed_data_csv,
         metadata_output_txt,
         model_selection_script
     )
 
-    
     def recommended_models_txt = model_selection.out[0]
 
-    
     hyperparameter_optimization(
         processed_data_csv,
         metadata_output_txt,
@@ -163,7 +187,7 @@ workflow {
         classification_script
     )
 
-    def models_dir = classification.out[0]
+    def models_dir = classification.out.models_dir
 
     model_evaluation(
     models_dir,
